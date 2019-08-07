@@ -101,6 +101,32 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
                     )
             );
     }
+		//grpc servers won't accept acknowledge requests that are too large so we split the ackIds
+		Tuple2<List<String>, List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
+		while (!splittedAckIds.f0.isEmpty()) {
+			AcknowledgeRequest acknowledgeRequest =
+					AcknowledgeRequest.newBuilder()
+									.setSubscription(projectSubscriptionName)
+									.addAllAckIds(splittedAckIds.f0)
+									.build();
+
+			acknowledgeWithRetries(acknowledgeRequest, retries);
+			splittedAckIds = splitAckIds(splittedAckIds.f1);
+		}
+	}
+
+	private void acknowledgeWithRetries(AcknowledgeRequest acknowledgeRequest, int retriesRemaining) {
+		try {
+			stub.withDeadlineAfter(timeout.toMillis(), TimeUnit.MILLISECONDS).acknowledge(acknowledgeRequest);
+		} catch (StatusRuntimeException e) {
+			if (retriesRemaining > 0) {
+				acknowledgeWithRetries(acknowledgeRequest, retriesRemaining - 1);
+				return;
+			}
+
+			throw e;
+		}
+	}
 
     /* maxPayload is the maximum number of bytes to devote to actual ids in
     * acknowledgement or modifyAckDeadline requests. A serialized

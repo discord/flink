@@ -174,9 +174,9 @@ public class PubSubSplitReader<T> implements SplitReader<Tuple2<T, Long>, PubSub
             List<String> messageIdsForCheckpoint = messageIdsToAcknowledge.get(checkpointId);
             if (!messageIdsForCheckpoint.isEmpty() && subscriber != null) {
                 LOG.info(
-                        "Acknowledging messages for checkpoint {} with IDs {}",
-                        checkpointId,
-                        messageIdsForCheckpoint);
+                        "Acknowledging {} messages for checkpoint {}.",
+                        messageIdsForCheckpoint.size(),
+                        checkpointId);
                 subscriber.acknowledge(messageIdsForCheckpoint);
             }
             messageIdsToAcknowledge.remove(checkpointId);

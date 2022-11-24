@@ -64,7 +64,7 @@ import static com.google.cloud.pubsub.v1.SubscriptionAdminSettings.defaultCreden
  * PubSubSourceReader} that joins. The split does not contain any split-specific information because
  * Pub/Sub does not allow subscribers to specify a "range" of messages to pull by providing
  * partitions or offsets. However, Pub/Sub will automatically load-balance messages between multiple
- * readers which use the same subscription.
+ * readers using the same subscription.
  *
  * <p>A {@link PubSubSource} can be constructed through the {@link PubSubSourceBuilder} like so:
  *

@@ -115,7 +115,7 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
     * @return First list contains no more than 512k bytes, second list contains remaining ids
     */
     private Tuple2<List<String>, List<String>> splitAckIds(List<String> ackIds) {
-        final int maxPayload = 500 * 1024; // little below 512k bytes to be on the safe side
+        final int maxPayload = 250 * 1024; // little below 512k bytes to be on the safe side
         final int fixedOverheadPerCall = 100;
         final int overheadPerId = 3;
 

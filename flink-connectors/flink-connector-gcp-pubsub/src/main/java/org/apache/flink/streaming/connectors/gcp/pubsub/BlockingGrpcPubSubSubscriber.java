@@ -18,6 +18,8 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub;
 
+import com.google.common.collect.Lists;
+
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 
@@ -88,18 +90,16 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
         }
 
         // grpc servers won't accept acknowledge requests that are too large so we split the ackIds
-        Tuple2<List<String>, List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
-        while (!splittedAckIds.f0.isEmpty()) {
-            AcknowledgeRequest acknowledgeRequest =
-                    AcknowledgeRequest.newBuilder()
-                            .setSubscription(projectSubscriptionName)
-                            .addAllAckIds(splittedAckIds.f0)
-                            .build();
-
-            stub.withDeadlineAfter(60, SECONDS).acknowledge(acknowledgeRequest);
-
-            splittedAckIds = splitAckIds(splittedAckIds.f1);
-        }
+        List<List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
+        splittedAckIds.forEach(
+            batch -> stub.withDeadlineAfter(60, SECONDS)
+                    .acknowledge(
+                            AcknowledgeRequest.newBuilder()
+                                    .setSubscription(projectSubscriptionName)
+                                    .addAllAckIds(batch)
+                                    .build()
+                    )
+            );
     }
 
     /* maxPayload is the maximum number of bytes to devote to actual ids in
@@ -114,21 +114,13 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
     * configurable on the server). We know from experience that it is 512K.
     * @return First list contains no more than 512k bytes, second list contains remaining ids
     */
-    private Tuple2<List<String>, List<String>> splitAckIds(List<String> ackIds) {
+    private List<List<String>> splitAckIds(List<String> ackIds) {
         final int maxPayload = 250 * 1024; // little below 512k bytes to be on the safe side
         final int fixedOverheadPerCall = 100;
         final int overheadPerId = 3;
+        final int maxNumAcksPerRequest = Math.floorDiv(maxPayload - fixedOverheadPerCall, overheadPerId);
 
-        int totalBytes = fixedOverheadPerCall;
-
-        for (int i = 0; i < ackIds.size(); i++) {
-            totalBytes += ackIds.get(i).length() + overheadPerId;
-            if (totalBytes > maxPayload) {
-                return Tuple2.of(ackIds.subList(0, i), ackIds.subList(i, ackIds.size()));
-            }
-        }
-
-        return Tuple2.of(ackIds, emptyList());
+        return Lists.partition(ackIds, maxNumAcksPerRequest);
     }
 
     @Override

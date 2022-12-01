@@ -92,28 +92,16 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
         // grpc servers won't accept acknowledge requests that are too large so we split the ackIds
         List<List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
         splittedAckIds.forEach(
-            batch -> stub.withDeadlineAfter(60, SECONDS)
-                    .acknowledge(
+            batch -> acknowledgeWithRetries(
                             AcknowledgeRequest.newBuilder()
                                     .setSubscription(projectSubscriptionName)
                                     .addAllAckIds(batch)
-                                    .build()
+                                    .build(),
+                        retries
                     )
             );
     }
-		//grpc servers won't accept acknowledge requests that are too large so we split the ackIds
-		Tuple2<List<String>, List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
-		while (!splittedAckIds.f0.isEmpty()) {
-			AcknowledgeRequest acknowledgeRequest =
-					AcknowledgeRequest.newBuilder()
-									.setSubscription(projectSubscriptionName)
-									.addAllAckIds(splittedAckIds.f0)
-									.build();
 
-			acknowledgeWithRetries(acknowledgeRequest, retries);
-			splittedAckIds = splitAckIds(splittedAckIds.f1);
-		}
-	}
 
 	private void acknowledgeWithRetries(AcknowledgeRequest acknowledgeRequest, int retriesRemaining) {
 		try {

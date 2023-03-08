@@ -80,6 +80,7 @@ under the License.
 		<dependency>
 			<groupId>com.google.api.grpc</groupId>
 			<artifactId>grpc-google-cloud-pubsub-v1</artifactId>
+			<scope>compile</scope>
 			<!-- Version is pulled from google-cloud-bom (loaded via the libraries-bom) -->
 		</dependency>
 
@@ -107,56 +108,53 @@ under the License.
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
-<!--	<build>-->
-<!--		<plugins>-->
-<!--			<plugin>-->
-<!--				<groupId>org.apache.maven.plugins</groupId>-->
-<!--				<artifactId>maven-shade-plugin</artifactId>-->
-<!--				<executions>-->
-<!--					<execution>-->
-<!--						<id>shade-flink</id>-->
-<!--						<phase>package</phase>-->
-<!--						<goals>-->
-<!--							<goal>shade</goal>-->
-<!--						</goals>-->
-<!--						<configuration>-->
-<!--							<artifactSet>-->
-<!--								<includes>-->
-<!--									<include>**</include>-->
-<!--								</includes>-->
-<!--&lt;!&ndash;								<excludes>&ndash;&gt;-->
-<!--&lt;!&ndash;									<exclude>com.google.api.grpc:grpc-google-cloud-pubsub-v1:*:*</exclude>&ndash;&gt;-->
-<!--&lt;!&ndash;									<exclude>com.google.cloud:google-cloud-pubsub:*:*</exclude>&ndash;&gt;-->
-<!--&lt;!&ndash;								</excludes>&ndash;&gt;-->
-<!--							</artifactSet>-->
-<!--							<filters>-->
-<!--								<filter>-->
-<!--									<artifact>*:*</artifact>-->
-<!--									<excludes>-->
-<!--										<exclude>META-INF/*</exclude>-->
-<!--										<exclude>META-INF/DEPENDENCIES</exclude>-->
-<!--										<exclude>META-INF/LICENSE*</exclude>-->
-<!--										<exclude>VersionInfo.java</exclude>-->
-<!--										<exclude>codegen-resources/**</exclude>-->
-<!--										<exclude>mime.types</exclude>-->
-<!--										<exclude>mozilla/public-suffix-list.txt</exclude>-->
-<!--									</excludes>-->
-<!--								</filter>-->
-<!--							</filters>-->
-<!--							<relocations>-->
-<!--								<relocation>-->
-<!--									<pattern>com.google.common</pattern>-->
-<!--									<shadedPattern>com.discord.shaded.google.common</shadedPattern>-->
-<!--								</relocation>-->
-<!--								<relocation>-->
-<!--									<pattern>com.google.pubsub</pattern>-->
-<!--									<shadedPattern>com.discord.shaded.google.pubsub</shadedPattern>-->
-<!--								</relocation>-->
-<!--							</relocations>-->
-<!--						</configuration>-->
-<!--					</execution>-->
-<!--				</executions>-->
-<!--			</plugin>-->
-<!--		</plugins>-->
-<!--	</build>-->
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>shade-flink</id>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<minimizeJar>true</minimizeJar>
+							<artifactSet>
+								<includes>
+									<include>**</include>
+								</includes>
+<!--								<excludes>-->
+<!--									<exclude>com.google.api.grpc:grpc-google-cloud-pubsub-v1:*:*</exclude>-->
+<!--									<exclude>com.google.cloud:google-cloud-pubsub:*:*</exclude>-->
+<!--								</excludes>-->
+							</artifactSet>
+							<filters>
+								<filter>
+									<artifact>*:*</artifact>
+									<excludes>
+										<exclude>META-INF/*</exclude>
+										<exclude>META-INF/DEPENDENCIES</exclude>
+										<exclude>META-INF/LICENSE*</exclude>
+										<exclude>VersionInfo.java</exclude>
+										<exclude>codegen-resources/**</exclude>
+										<exclude>mime.types</exclude>
+										<exclude>mozilla/public-suffix-list.txt</exclude>
+									</excludes>
+								</filter>
+							</filters>
+							<relocations>
+								<relocation>
+									<pattern>com.google.common</pattern>
+									<shadedPattern>com.discord.shaded.google.common</shadedPattern>
+								</relocation>
+							</relocations>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 </project>

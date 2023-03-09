@@ -124,7 +124,7 @@ under the License.
 							<minimizeJar>true</minimizeJar>
 							<artifactSet>
 								<includes>
-									<include>**</include>
+									<include>com.google.common</include>
 								</includes>
 <!--								<excludes>-->
 <!--									<exclude>com.google.api.grpc:grpc-google-cloud-pubsub-v1:*:*</exclude>-->

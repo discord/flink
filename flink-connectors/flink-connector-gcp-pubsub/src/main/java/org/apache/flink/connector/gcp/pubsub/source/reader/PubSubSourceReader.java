@@ -77,7 +77,7 @@ public class PubSubSourceReader<T>
      */
     @Override
     public void notifyCheckpointComplete(long checkpointId) throws Exception {
-        LOG.info("Acknowledging received GCP Pub/Sub messages for checkpoint {}", checkpointId);
+        LOG.trace("Acknowledging received GCP Pub/Sub messages for checkpoint {}", checkpointId);
         ((PubSubSourceFetcherManager<T>) splitFetcherManager).acknowledgeMessages(checkpointId);
     }
 

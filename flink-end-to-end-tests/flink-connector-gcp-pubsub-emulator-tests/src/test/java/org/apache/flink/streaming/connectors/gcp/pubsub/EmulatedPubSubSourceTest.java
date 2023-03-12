@@ -17,23 +17,27 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub;
 
+import com.google.api.gax.grpc.GrpcTransportChannel;
+import com.google.api.gax.rpc.FixedTransportChannelProvider;
+import com.google.api.gax.rpc.TransportChannelProvider;
+import com.google.cloud.pubsub.v1.Publisher;
+import com.google.protobuf.ByteString;
+import com.google.pubsub.v1.ProjectSubscriptionName;
+import com.google.pubsub.v1.PubsubMessage;
+import io.grpc.ManagedChannel;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamUtils;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.EmulatorCredentials;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.GCloudUnitTestBase;
-import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.PubSubSubscriberFactoryForEmulator;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.PubsubHelper;
-
-import com.google.cloud.pubsub.v1.Publisher;
-import com.google.protobuf.ByteString;
-import com.google.pubsub.v1.PubsubMessage;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
-
 import java.time.Duration;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -124,6 +128,14 @@ public class EmulatedPubSubSourceTest extends GCloudUnitTestBase {
         env.setParallelism(4);
         env.setRestartStrategy(RestartStrategies.noRestart());
 
+        ManagedChannel managedChannel =
+                NettyChannelBuilder.forTarget(getPubSubHostPort())
+                        .usePlaintext() // This is 'Ok' because this is ONLY used for testing.
+                        .build();
+
+        TransportChannelProvider channelProvider =
+                FixedTransportChannelProvider.create(GrpcTransportChannel.create(managedChannel));
+
         DataStream<String> fromPubSub =
                 env.addSource(
                                 PubSubSource.newBuilder()
@@ -133,13 +145,13 @@ public class EmulatedPubSubSourceTest extends GCloudUnitTestBase {
                                         .withSubscriptionName(SUBSCRIPTION_NAME)
                                         .withCredentials(EmulatorCredentials.getInstance())
                                         .withPubSubSubscriberFactory(
-                                                new PubSubSubscriberFactoryForEmulator(
+                                                new DefaultPubSubSubscriberFactory(
                                                         getPubSubHostPort(),
-                                                        PROJECT_NAME,
-                                                        SUBSCRIPTION_NAME,
+                                                        ProjectSubscriptionName.format(PROJECT_NAME, SUBSCRIPTION_NAME),
                                                         10,
                                                         Duration.ofSeconds(1),
-                                                        3))
+                                                        3,
+                                                        1))
                                         .build())
                         .name("PubSub source");
 

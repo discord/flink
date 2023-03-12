@@ -35,7 +35,7 @@ under the License.
 	<packaging>jar</packaging>
 
 	<properties>
-		<google-cloud-libraries-bom.version>25.0.0</google-cloud-libraries-bom.version>
+		<google-cloud-libraries-bom.version>26.1.6</google-cloud-libraries-bom.version>
 	</properties>
 
 	<dependencyManagement>
@@ -138,7 +138,8 @@ under the License.
 							<minimizeJar>true</minimizeJar>
 							<artifactSet>
 								<includes>
-									<include>com.google.common</include>
+<!--									<include>*:*</include>-->
+<!--									<include>com.google.pubsub.v1</include>-->
 								</includes>
 <!--								<excludes>-->
 <!--									<exclude>com.google.api.grpc:grpc-google-cloud-pubsub-v1:*:*</exclude>-->
@@ -160,10 +161,10 @@ under the License.
 								</filter>
 							</filters>
 							<relocations>
-								<relocation>
-									<pattern>com.google.common</pattern>
-									<shadedPattern>com.discord.shaded.google.common</shadedPattern>
-								</relocation>
+<!--								<relocation>-->
+<!--									<pattern>com.google</pattern>-->
+<!--									<shadedPattern>com.discord.shaded.google</shadedPattern>-->
+<!--								</relocation>-->
 							</relocations>
 						</configuration>
 					</execution>

@@ -46,10 +46,10 @@ import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.threeten.bp.Duration;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -69,6 +69,7 @@ public class PubSubSink<IN> extends RichSinkFunction<IN> implements Checkpointed
     private final ApiFutureCallback<String> failureHandler;
     private final AtomicInteger numPendingFutures;
     private final Credentials credentials;
+    private final Map<String, String> attributes;
     private final SerializationSchema<IN> serializationSchema;
     private final String projectName;
     private final String topicName;
@@ -82,7 +83,8 @@ public class PubSubSink<IN> extends RichSinkFunction<IN> implements Checkpointed
             SerializationSchema<IN> serializationSchema,
             String projectName,
             String topicName,
-            String hostAndPortForEmulator) {
+            String hostAndPortForEmulator,
+            Map<String, String> attributes) {
         this.exceptionAtomicReference = new AtomicReference<>();
         this.failureHandler = new FailureHandler();
         this.numPendingFutures = new AtomicInteger(0);
@@ -91,6 +93,7 @@ public class PubSubSink<IN> extends RichSinkFunction<IN> implements Checkpointed
         this.projectName = projectName;
         this.topicName = topicName;
         this.hostAndPortForEmulator = hostAndPortForEmulator;
+        this.attributes = attributes;
     }
 
     private transient ManagedChannel managedChannel = null;
@@ -121,13 +124,13 @@ public class PubSubSink<IN> extends RichSinkFunction<IN> implements Checkpointed
                     .setRetrySettings(
                             RetrySettings.newBuilder()
                                     .setMaxAttempts(10)
-                                    .setTotalTimeout(Duration.ofSeconds(10))
-                                    .setInitialRetryDelay(Duration.ofMillis(100))
+                                    .setTotalTimeout(org.threeten.bp.Duration.ofSeconds(10))
+                                    .setInitialRetryDelay(org.threeten.bp.Duration.ofMillis(100))
                                     .setRetryDelayMultiplier(1.3)
-                                    .setMaxRetryDelay(Duration.ofSeconds(5))
-                                    .setInitialRpcTimeout(Duration.ofSeconds(5))
+                                    .setMaxRetryDelay(org.threeten.bp.Duration.ofSeconds(5))
+                                    .setInitialRpcTimeout(org.threeten.bp.Duration.ofSeconds(5))
                                     .setRpcTimeoutMultiplier(1)
-                                    .setMaxRpcTimeout(Duration.ofSeconds(10))
+                                    .setMaxRpcTimeout(org.threeten.bp.Duration.ofSeconds(10))
                                     .build());
         }
 
@@ -179,11 +182,19 @@ public class PubSubSink<IN> extends RichSinkFunction<IN> implements Checkpointed
 
     @Override
     public void invoke(IN message, SinkFunction.Context context) {
-        PubsubMessage pubsubMessage =
-                PubsubMessage.newBuilder()
-                        .setData(ByteString.copyFrom(serializationSchema.serialize(message)))
-                        .build();
-
+        PubsubMessage pubsubMessage;
+        if (this.attributes != null && !this.attributes.isEmpty()) {
+            pubsubMessage =
+                    PubsubMessage.newBuilder()
+                            .setData(ByteString.copyFrom(serializationSchema.serialize(message)))
+                            .putAllAttributes(this.attributes)
+                            .build();
+        } else {
+            pubsubMessage =
+                    PubsubMessage.newBuilder()
+                            .setData(ByteString.copyFrom(serializationSchema.serialize(message)))
+                            .build();
+        }
         ApiFuture<String> future = publisher.publish(pubsubMessage);
         numPendingFutures.incrementAndGet();
         ApiFutures.addCallback(future, failureHandler, directExecutor());
@@ -243,12 +254,17 @@ public class PubSubSink<IN> extends RichSinkFunction<IN> implements Checkpointed
         private SerializationSchema<IN> serializationSchema;
         private String projectName;
         private String topicName;
-
+        private Map<String, String> attributes;
         private Credentials credentials;
         private String hostAndPort;
 
         private PubSubSinkBuilder(SerializationSchema<IN> serializationSchema) {
             this.serializationSchema = serializationSchema;
+        }
+
+        public PubSubSinkBuilder<IN> withAttributes(Map<String, String> attributes) {
+            this.attributes = attributes;
+            return this;
         }
 
         /**
@@ -307,7 +323,12 @@ public class PubSubSink<IN> extends RichSinkFunction<IN> implements Checkpointed
                 }
             }
             return new PubSubSink<>(
-                    credentials, serializationSchema, projectName, topicName, hostAndPort);
+                    credentials,
+                    serializationSchema,
+                    projectName,
+                    topicName,
+                    hostAndPort,
+                    attributes);
         }
     }
 

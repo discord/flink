@@ -20,6 +20,9 @@ package org.apache.flink.streaming.connectors.gcp.pubsub.common;
 import org.apache.flink.api.common.state.CheckpointListener;
 import org.apache.flink.streaming.api.checkpoint.ListCheckpointed;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,6 +53,8 @@ import static java.util.stream.Collectors.toList;
  */
 public class AcknowledgeOnCheckpoint<ACKID extends Serializable>
         implements CheckpointListener, ListCheckpointed<AcknowledgeIdsForCheckpoint<ACKID>> {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AcknowledgeOnCheckpoint.class);
     private final Acknowledger<ACKID> acknowledger;
     private List<AcknowledgeIdsForCheckpoint<ACKID>> acknowledgeIdsPerCheckpoint;
     private List<ACKID> acknowledgeIdsForPendingCheckpoint;
@@ -69,6 +74,7 @@ public class AcknowledgeOnCheckpoint<ACKID extends Serializable>
 
     @Override
     public void notifyCheckpointComplete(long checkpointId) {
+        LOG.info("notifyOnCheckpointComplete has triggered.");
         // get all acknowledgeIds of this and earlier checkpoints
         List<ACKID> idsToAcknowledge =
                 acknowledgeIdsPerCheckpoint.stream()
@@ -80,8 +86,10 @@ public class AcknowledgeOnCheckpoint<ACKID extends Serializable>
                                 acknowledgeIdsForCheckpoint ->
                                         acknowledgeIdsForCheckpoint.getAcknowledgeIds().stream())
                         .collect(toList());
+        LOG.info("Got " + idsToAcknowledge.size() + " ids to acknowledge.");
 
         acknowledger.acknowledge(idsToAcknowledge);
+        LOG.info("Acknowledger finished.");
 
         // only keep acknowledgeIds of newer checkpointIds
         acknowledgeIdsPerCheckpoint =
@@ -93,6 +101,7 @@ public class AcknowledgeOnCheckpoint<ACKID extends Serializable>
                         .collect(toList());
         outstandingAcknowledgements =
                 new AtomicInteger(numberOfAcknowledgementIds(acknowledgeIdsPerCheckpoint));
+        LOG.info("notifyOnCheckpointComplete function reached end.");
     }
 
     @Override
@@ -101,10 +110,17 @@ public class AcknowledgeOnCheckpoint<ACKID extends Serializable>
     @Override
     public List<AcknowledgeIdsForCheckpoint<ACKID>> snapshotState(
             long checkpointId, long timestamp) {
+        LOG.info("snapshotState has run.");
         acknowledgeIdsPerCheckpoint.add(
                 new AcknowledgeIdsForCheckpoint<>(
                         checkpointId, acknowledgeIdsForPendingCheckpoint));
         acknowledgeIdsForPendingCheckpoint = new ArrayList<>();
+        LOG.info(
+                "There are "
+                        + acknowledgeIdsPerCheckpoint.size()
+                        + "keys, and most recent has "
+                        + acknowledgeIdsForPendingCheckpoint.size()
+                        + "elements.");
 
         return acknowledgeIdsPerCheckpoint;
     }

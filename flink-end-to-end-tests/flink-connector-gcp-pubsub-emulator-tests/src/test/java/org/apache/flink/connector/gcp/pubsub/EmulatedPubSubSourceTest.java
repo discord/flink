@@ -19,6 +19,15 @@
 
 package org.apache.flink.connector.gcp.pubsub;
 
+import com.google.api.gax.grpc.GrpcTransportChannel;
+import com.google.api.gax.rpc.FixedTransportChannelProvider;
+import com.google.api.gax.rpc.TransportChannelProvider;
+import com.google.cloud.pubsub.v1.Publisher;
+import com.google.protobuf.ByteString;
+import com.google.pubsub.v1.ProjectSubscriptionName;
+import com.google.pubsub.v1.PubsubMessage;
+import io.grpc.ManagedChannel;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
@@ -26,19 +35,15 @@ import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.connector.gcp.pubsub.source.PubSubSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.connectors.gcp.pubsub.DefaultPubSubSubscriberFactory;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.EmulatorCredentials;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.GCloudUnitTestBase;
-import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.PubSubSubscriberFactoryForEmulator;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.PubsubHelper;
-
-import com.google.cloud.pubsub.v1.Publisher;
-import com.google.protobuf.ByteString;
-import com.google.pubsub.v1.PubsubMessage;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-
 import java.time.Duration;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -109,13 +114,13 @@ public class EmulatedPubSubSourceTest extends GCloudUnitTestBase {
                         .setSubscriptionName(SUBSCRIPTION_NAME)
                         .setCredentials(EmulatorCredentials.getInstance())
                         .setPubSubSubscriberFactory(
-                                new PubSubSubscriberFactoryForEmulator(
+                                new DefaultPubSubSubscriberFactory(
                                         getPubSubHostPort(),
-                                        PROJECT_NAME,
-                                        SUBSCRIPTION_NAME,
+                                        ProjectSubscriptionName.format(PROJECT_NAME, SUBSCRIPTION_NAME),
                                         10,
-                                        Duration.ofSeconds(1),
-                                        3))
+                                         Duration.ofSeconds(1),
+                                        3,
+                                        1))
                         .build();
 
         DataStream<String> fromPubSub =

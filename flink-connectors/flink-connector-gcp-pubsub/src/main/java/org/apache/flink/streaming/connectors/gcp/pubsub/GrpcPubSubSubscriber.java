@@ -20,17 +20,23 @@ package org.apache.flink.streaming.connectors.gcp.pubsub;
 
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 
+import com.google.cloud.pubsub.v1.stub.SubscriberStub;
 import com.google.pubsub.v1.AcknowledgeRequest;
 import com.google.pubsub.v1.PullRequest;
+import com.google.pubsub.v1.PullResponse;
 import com.google.pubsub.v1.ReceivedMessage;
-import com.google.pubsub.v1.SubscriberGrpc;
-import io.grpc.ManagedChannel;
-import io.grpc.StatusRuntimeException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -38,79 +44,98 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  * Implementation for {@link PubSubSubscriber}. This Grpc PubSubSubscriber allows for flexible
  * timeouts and retries.
  */
-public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
+public class GrpcPubSubSubscriber implements PubSubSubscriber {
+    private static final Logger LOG = LoggerFactory.getLogger(GrpcPubSubSubscriber.class);
     private final String projectSubscriptionName;
-    private final ManagedChannel channel;
-    private final SubscriberGrpc.SubscriberBlockingStub stub;
-    private final int retries;
-    private final Duration timeout;
+    private final SubscriberStub stub;
     private final PullRequest pullRequest;
+    private final int concurrentPullRequests;
 
-    public BlockingGrpcPubSubSubscriber(
+    private ExecutorService executor;
+
+    public GrpcPubSubSubscriber(
             String projectSubscriptionName,
-            ManagedChannel channel,
-            SubscriberGrpc.SubscriberBlockingStub stub,
+            SubscriberStub stub,
             PullRequest pullRequest,
-            int retries,
-            Duration timeout) {
+            int concurrentPullRequests) {
         this.projectSubscriptionName = projectSubscriptionName;
-        this.channel = channel;
         this.stub = stub;
-        this.retries = retries;
-        this.timeout = timeout;
         this.pullRequest = pullRequest;
+        this.concurrentPullRequests = concurrentPullRequests;
+        this.executor = Executors.newFixedThreadPool(concurrentPullRequests);
+    }
+
+    public GrpcPubSubSubscriber(
+            String projectSubscriptionName, SubscriberStub stub, PullRequest pullRequest) {
+        this.projectSubscriptionName = projectSubscriptionName;
+        this.stub = stub;
+        this.pullRequest = pullRequest;
+        this.concurrentPullRequests = 1;
     }
 
     @Override
     public List<ReceivedMessage> pull() {
-        return pull(retries);
-    }
+        CountDownLatch latch = new CountDownLatch(concurrentPullRequests);
+        List<ReceivedMessage> receivedMessageList = Collections.synchronizedList(new ArrayList<>());
+        AtomicInteger errorCount = new AtomicInteger(0);
 
-    private List<ReceivedMessage> pull(int retriesRemaining) {
-        try {
-            return stub.withDeadlineAfter(timeout.toMillis(), TimeUnit.MILLISECONDS)
-                    .pull(pullRequest)
-                    .getReceivedMessagesList();
-        } catch (StatusRuntimeException e) {
-            if (retriesRemaining > 0) {
-                return pull(retriesRemaining - 1);
-            }
-
-            throw e;
+        for (int i = 0; i < concurrentPullRequests; i++) {
+            executor.submit(
+                    () -> {
+                        try {
+                            PullResponse response =
+                                    stub.pullCallable().futureCall(pullRequest).get(60L, SECONDS);
+                            receivedMessageList.addAll(response.getReceivedMessagesList());
+                        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                            LOG.error("Encountered exception in Pull futures! " + e);
+                            errorCount.incrementAndGet();
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
         }
+
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            LOG.error(
+                    "Encountered InterruptedException while waiting for Pull futures to complete! "
+                            + e);
+        }
+
+        if (errorCount.get() > 0) {
+            // Handle the case where one or more pull requests encountered an exception.
+            // You can choose how to handle it, e.g., return an empty list or throw a custom
+            // exception.
+            LOG.error("Error count was: " + errorCount.get());
+        }
+        return receivedMessageList;
     }
 
     @Override
     public void acknowledge(List<String> acknowledgementIds) {
+        LOG.info("Acknowledge inside grpcpubsubsubscriber has been called");
         if (acknowledgementIds.isEmpty()) {
             return;
         }
 
         // grpc servers won't accept acknowledge requests that are too large so we split the ackIds
         List<List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
+        LOG.info(
+                "Splits: "
+                        + splittedAckIds.size()
+                        + " and "
+                        + splittedAckIds.stream().map(List::size).reduce(0, Integer::sum)
+                        + " elements.");
         splittedAckIds.forEach(
                 batch ->
-                        acknowledgeWithRetries(
-                                AcknowledgeRequest.newBuilder()
-                                        .setSubscription(projectSubscriptionName)
-                                        .addAllAckIds(batch)
-                                        .build(),
-                                retries));
-    }
-
-    private void acknowledgeWithRetries(
-            AcknowledgeRequest acknowledgeRequest, int retriesRemaining) {
-        try {
-            stub.withDeadlineAfter(timeout.toMillis(), TimeUnit.MILLISECONDS)
-                    .acknowledge(acknowledgeRequest);
-        } catch (StatusRuntimeException e) {
-            if (retriesRemaining > 0) {
-                acknowledgeWithRetries(acknowledgeRequest, retriesRemaining - 1);
-                return;
-            }
-
-            throw e;
-        }
+                        stub.acknowledgeCallable()
+                                .call(
+                                        AcknowledgeRequest.newBuilder()
+                                                .setSubscription(projectSubscriptionName)
+                                                .addAllAckIds(batch)
+                                                .build()));
+        LOG.info("Finished calling all acknowledgeCallables. End of function.");
     }
 
     /* maxPayload is the maximum number of bytes to devote to actual ids in
@@ -152,7 +177,7 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
 
     @Override
     public void close() throws Exception {
-        channel.shutdownNow();
-        channel.awaitTermination(20, SECONDS);
+        stub.shutdownNow();
+        stub.awaitTermination(20, SECONDS);
     }
 }

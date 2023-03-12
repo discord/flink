@@ -22,6 +22,8 @@ import org.apache.flink.connector.gcp.pubsub.source.PubSubSource;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriberFactory;
 
+import com.google.api.gax.grpc.GrpcTransportChannel;
+import com.google.api.gax.rpc.FixedTransportChannelProvider;
 import com.google.api.gax.rpc.StatusCode;
 import com.google.api.gax.rpc.TransportChannelProvider;
 import com.google.auth.Credentials;
@@ -29,9 +31,11 @@ import com.google.cloud.pubsub.v1.stub.GrpcSubscriberStub;
 import com.google.cloud.pubsub.v1.stub.SubscriberStub;
 import com.google.cloud.pubsub.v1.stub.SubscriberStubSettings;
 import com.google.pubsub.v1.PullRequest;
-import org.threeten.bp.Duration;
+import io.grpc.ManagedChannel;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.HashSet;
 
@@ -40,11 +44,12 @@ import java.util.HashSet;
  * obtain a subscriber with which messages can be pulled from GCP Pub/Sub.
  */
 public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
-    private final TransportChannelProvider channelProvider;
+    private final String hostAndPort;
     private final int retries;
     private final Duration timeout;
     private final int maxMessagesPerPull;
     private final String projectSubscriptionName;
+    private final int parallelPullRequests;
 
     /**
      * @param projectSubscriptionName The formatted name of the Pub/Sub project and subscription to
@@ -56,16 +61,33 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
      * @param maxMessagesPerPull The maximum number of messages that should be pulled in one go.
      */
     public DefaultPubSubSubscriberFactory(
-            TransportChannelProvider channelProvider,
+            String hostAndPort,
             String projectSubscriptionName,
             int retries,
             Duration pullTimeout,
-            int maxMessagesPerPull) {
-        this.channelProvider = channelProvider;
+            int maxMessagesPerPull,
+            int parallelPullRequests) {
+        this.hostAndPort = hostAndPort;
         this.retries = retries;
         this.timeout = pullTimeout;
         this.maxMessagesPerPull = maxMessagesPerPull;
         this.projectSubscriptionName = projectSubscriptionName;
+        this.parallelPullRequests = parallelPullRequests;
+    }
+
+    public DefaultPubSubSubscriberFactory(
+            String projectSubscriptionName,
+            int retries,
+            Duration pullTimeout,
+            int maxMessagesPerPull,
+            int parallelPullRequests) {
+        this(
+                null,
+                projectSubscriptionName,
+                retries,
+                pullTimeout,
+                maxMessagesPerPull,
+                parallelPullRequests);
     }
 
     public DefaultPubSubSubscriberFactory(
@@ -73,18 +95,29 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
             int retries,
             Duration pullTimeout,
             int maxMessagesPerPull) {
-        this(
-                SubscriberStubSettings.defaultGrpcTransportProviderBuilder()
-                        .setMaxInboundMessageSize(20 * 1024 * 1024) // 20MB (maximum message size).
-                        .build(),
-                projectSubscriptionName,
-                retries,
-                pullTimeout,
-                maxMessagesPerPull);
+        this(projectSubscriptionName, retries, pullTimeout, maxMessagesPerPull, 1);
     }
 
     @Override
     public PubSubSubscriber getSubscriber(Credentials credentials) throws IOException {
+        TransportChannelProvider channelProvider;
+        if (hostAndPort != null) {
+            // We are in testing mode, so create a local channel.
+            ManagedChannel managedChannel =
+                    NettyChannelBuilder.forTarget(hostAndPort)
+                            .usePlaintext() // This is okay because it's only used for testing.
+                            .build();
+
+            channelProvider =
+                    FixedTransportChannelProvider.create(
+                            GrpcTransportChannel.create(managedChannel));
+        } else {
+            channelProvider =
+                    SubscriberStubSettings.defaultGrpcTransportProviderBuilder()
+                            .setMaxInboundMessageSize(
+                                    20 * 1024 * 1024) // 20MB (maximum message size).
+                            .build();
+        }
 
         SubscriberStubSettings.Builder subscriberSettingsBuilder =
                 SubscriberStubSettings.newBuilder();
@@ -96,11 +129,15 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
                                 .createSubscriptionSettings()
                                 .getRetrySettings()
                                 .toBuilder()
-                                .setInitialRetryDelay(Duration.ofMillis(10L))
-                                .setInitialRpcTimeout(timeout)
+                                .setInitialRetryDelay(org.threeten.bp.Duration.ofMillis(10L))
+                                .setInitialRpcTimeout(
+                                        org.threeten.bp.Duration.ofSeconds(
+                                                timeout.getSeconds(), timeout.getNano()))
                                 .setMaxAttempts(retries)
-                                .setMaxRetryDelay(Duration.ofSeconds(10L))
-                                .setMaxRpcTimeout(timeout)
+                                .setMaxRetryDelay(org.threeten.bp.Duration.ofSeconds(10L))
+                                .setMaxRpcTimeout(
+                                        org.threeten.bp.Duration.ofSeconds(
+                                                timeout.getSeconds(), timeout.getNano()))
                                 .setRetryDelayMultiplier(1.4)
                                 .build())
                 .setRetryableCodes(
@@ -120,6 +157,7 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
                         .setSubscription(projectSubscriptionName)
                         .build();
 
-        return new GrpcPubSubSubscriber(projectSubscriptionName, stub, pullRequest);
+        return new GrpcPubSubSubscriber(
+                projectSubscriptionName, stub, pullRequest, parallelPullRequests);
     }
 }

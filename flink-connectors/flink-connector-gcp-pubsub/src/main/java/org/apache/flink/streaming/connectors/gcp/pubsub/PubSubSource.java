@@ -44,10 +44,10 @@ import com.google.cloud.pubsub.v1.Subscriber;
 import com.google.pubsub.v1.ProjectSubscriptionName;
 import com.google.pubsub.v1.PubsubMessage;
 import com.google.pubsub.v1.ReceivedMessage;
-import org.threeten.bp.Duration;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 
@@ -307,13 +307,17 @@ public class PubSubSource<OUT> extends RichSourceFunction<OUT>
          * @return The current PubSubSourceBuilder instance
          */
         public PubSubSourceBuilder<OUT> withPubSubSubscriberFactory(
-                int maxMessagesPerPull, Duration perRequestTimeout, int retries) {
+                int maxMessagesPerPull,
+                Duration perRequestTimeout,
+                int retries,
+                int parallelPullRequests) {
             this.pubSubSubscriberFactory =
                     new DefaultPubSubSubscriberFactory(
                             ProjectSubscriptionName.format(projectName, subscriptionName),
                             retries,
                             perRequestTimeout,
-                            maxMessagesPerPull);
+                            maxMessagesPerPull,
+                            parallelPullRequests);
             return this;
         }
 
@@ -346,7 +350,8 @@ public class PubSubSource<OUT> extends RichSourceFunction<OUT>
                                 ProjectSubscriptionName.format(projectName, subscriptionName),
                                 3,
                                 Duration.ofSeconds(15),
-                                100);
+                                100,
+                                1);
             }
 
             return new PubSubSource<>(

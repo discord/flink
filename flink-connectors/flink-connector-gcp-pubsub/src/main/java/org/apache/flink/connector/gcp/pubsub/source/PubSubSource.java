@@ -49,9 +49,9 @@ import org.apache.flink.util.Preconditions;
 
 import com.google.auth.Credentials;
 import com.google.pubsub.v1.ProjectSubscriptionName;
-import org.threeten.bp.Duration;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Properties;
 import java.util.function.Supplier;
 
@@ -173,6 +173,7 @@ public class PubSubSource<OUT>
     public static class PubSubSourceBuilder<OUT> {
         private static final int DEFAULT_PUBSUB_SUBSCRIBER_NUMBER_OF_RETRIES = 3;
         private static final int DEFAULT_PUBSUB_SUBSCRIBER_MAX_MESSAGES_PER_PULL = 100;
+        private static final int DEFAULT_PARALLEL_PULL_REQUESTS = 100;
 
         private PubSubDeserializationSchema<OUT> deserializationSchema;
         private String projectName;
@@ -253,13 +254,17 @@ public class PubSubSource<OUT>
          *     of failure.
          */
         public PubSubSourceBuilder<OUT> setPubSubSubscriberFactory(
-                int maxMessagesPerPull, Duration perRequestTimeout, int retries) {
+                int maxMessagesPerPull,
+                Duration perRequestTimeout,
+                int retries,
+                int parallelPullRequests) {
             this.pubSubSubscriberFactory =
                     new DefaultPubSubSubscriberFactory(
                             ProjectSubscriptionName.format(projectName, subscriptionName),
                             retries,
                             perRequestTimeout,
-                            maxMessagesPerPull);
+                            maxMessagesPerPull,
+                            parallelPullRequests);
             return this;
         }
 
@@ -286,7 +291,8 @@ public class PubSubSource<OUT>
                                 ProjectSubscriptionName.format(projectName, subscriptionName),
                                 DEFAULT_PUBSUB_SUBSCRIBER_NUMBER_OF_RETRIES,
                                 Duration.ofSeconds(15),
-                                DEFAULT_PUBSUB_SUBSCRIBER_MAX_MESSAGES_PER_PULL);
+                                DEFAULT_PUBSUB_SUBSCRIBER_MAX_MESSAGES_PER_PULL,
+                                DEFAULT_PARALLEL_PULL_REQUESTS);
             }
 
             return new PubSubSource(

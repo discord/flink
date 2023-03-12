@@ -36,7 +36,7 @@ import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.PubsubHelper;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.threeten.bp.Duration;
+import java.time.Duration;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -146,11 +146,12 @@ public class EmulatedPubSubSourceTest extends GCloudUnitTestBase {
                                         .withCredentials(EmulatorCredentials.getInstance())
                                         .withPubSubSubscriberFactory(
                                                 new DefaultPubSubSubscriberFactory(
-                                                        channelProvider,
+                                                        getPubSubHostPort(),
                                                         ProjectSubscriptionName.format(PROJECT_NAME, SUBSCRIPTION_NAME),
                                                         10,
                                                         Duration.ofSeconds(1),
-                                                        3))
+                                                        3,
+                                                        1))
                                         .build())
                         .name("PubSub source");
 

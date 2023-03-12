@@ -40,7 +40,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.threeten.bp.Duration;
+import java.time.Duration;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -176,11 +176,12 @@ public class EmulatedFullTopologyTest extends GCloudUnitTestBase {
                                 // Connect to the emulator
                                 .withPubSubSubscriberFactory(
                                         new DefaultPubSubSubscriberFactory(
-                                                channelProvider,
+                                                getPubSubHostPort(),
                                                 ProjectSubscriptionName.format(PROJECT_NAME, SUBSCRIPTION_NAME),
                                                 1,
                                                 Duration.ofSeconds(1),
-                                                3))
+                                                3,
+                                                1))
 
                                 // Make sure we stop the source after a timeout to cleanly end the
                                 // test.

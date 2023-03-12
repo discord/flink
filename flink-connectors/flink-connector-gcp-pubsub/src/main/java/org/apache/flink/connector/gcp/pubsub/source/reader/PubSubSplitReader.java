@@ -41,6 +41,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 /**
  * A {@link SplitReader} to read from a given {@link PubSubSubscriber}.
@@ -179,7 +180,15 @@ public class PubSubSplitReader<T> implements SplitReader<Tuple2<T, Long>, PubSub
                         checkpointId);
                 subscriber.acknowledge(messageIdsForCheckpoint);
             }
+            LOG.info("Removing checkpointId " + checkpointId);
             messageIdsToAcknowledge.remove(checkpointId);
+            LOG.info(
+                    "Successfully removed checkpointId "
+                            + checkpointId
+                            + ". KeySet is "
+                            + messageIdsToAcknowledge.keySet().stream()
+                                    .map(String::valueOf)
+                                    .collect(Collectors.joining(",")));
         }
     }
 }

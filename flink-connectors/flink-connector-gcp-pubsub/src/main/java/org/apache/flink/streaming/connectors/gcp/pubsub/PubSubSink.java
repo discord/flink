@@ -46,7 +46,6 @@ import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.threeten.bp.Duration;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -121,13 +120,13 @@ public class PubSubSink<IN> extends RichSinkFunction<IN> implements Checkpointed
                     .setRetrySettings(
                             RetrySettings.newBuilder()
                                     .setMaxAttempts(10)
-                                    .setTotalTimeout(Duration.ofSeconds(10))
-                                    .setInitialRetryDelay(Duration.ofMillis(100))
+                                    .setTotalTimeout(org.threeten.bp.Duration.ofSeconds(10))
+                                    .setInitialRetryDelay(org.threeten.bp.Duration.ofMillis(100))
                                     .setRetryDelayMultiplier(1.3)
-                                    .setMaxRetryDelay(Duration.ofSeconds(5))
-                                    .setInitialRpcTimeout(Duration.ofSeconds(5))
+                                    .setMaxRetryDelay(org.threeten.bp.Duration.ofSeconds(5))
+                                    .setInitialRpcTimeout(org.threeten.bp.Duration.ofSeconds(5))
                                     .setRpcTimeoutMultiplier(1)
-                                    .setMaxRpcTimeout(Duration.ofSeconds(10))
+                                    .setMaxRpcTimeout(org.threeten.bp.Duration.ofSeconds(10))
                                     .build());
         }
 

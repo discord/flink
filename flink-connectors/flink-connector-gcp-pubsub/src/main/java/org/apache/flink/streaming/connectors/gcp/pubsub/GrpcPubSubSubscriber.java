@@ -20,13 +20,19 @@ package org.apache.flink.streaming.connectors.gcp.pubsub;
 
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 
+import com.google.api.core.ApiFuture;
 import com.google.cloud.pubsub.v1.stub.SubscriberStub;
 import com.google.pubsub.v1.AcknowledgeRequest;
 import com.google.pubsub.v1.PullRequest;
+import com.google.pubsub.v1.PullResponse;
 import com.google.pubsub.v1.ReceivedMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -35,30 +41,76 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  * timeouts and retries.
  */
 public class GrpcPubSubSubscriber implements PubSubSubscriber {
+    private static final Logger LOG = LoggerFactory.getLogger(GrpcPubSubSubscriber.class);
     private final String projectSubscriptionName;
     private final SubscriberStub stub;
     private final PullRequest pullRequest;
+    private final int concurrentPullRequests;
+
+    public GrpcPubSubSubscriber(
+            String projectSubscriptionName,
+            SubscriberStub stub,
+            PullRequest pullRequest,
+            int concurrentPullRequests) {
+        this.projectSubscriptionName = projectSubscriptionName;
+        this.stub = stub;
+        this.pullRequest = pullRequest;
+        this.concurrentPullRequests = concurrentPullRequests;
+    }
 
     public GrpcPubSubSubscriber(
             String projectSubscriptionName, SubscriberStub stub, PullRequest pullRequest) {
         this.projectSubscriptionName = projectSubscriptionName;
         this.stub = stub;
         this.pullRequest = pullRequest;
+        this.concurrentPullRequests = 1;
     }
 
     @Override
     public List<ReceivedMessage> pull() {
-        return stub.pullCallable().call(pullRequest).getReceivedMessagesList();
+        if (concurrentPullRequests > 1) {
+            List<ApiFuture<PullResponse>> futures = new ArrayList<ApiFuture<PullResponse>>();
+            for (int i = 0; i < concurrentPullRequests; i++) {
+                futures.add(stub.pullCallable().futureCall(pullRequest));
+            }
+            List<ReceivedMessage> receivedMessageList = new ArrayList<ReceivedMessage>();
+
+            for (int i = 0; i < concurrentPullRequests; i++) {
+                try {
+                    receivedMessageList.addAll(
+                            futures.get(i).get(60L, SECONDS).getReceivedMessagesList());
+                } catch (ExecutionException e) {
+                    LOG.error("Encountered ExecutionException in Pull futures! " + e);
+                    return new ArrayList<ReceivedMessage>();
+                } catch (InterruptedException e) {
+                    LOG.error("Encountered InterruptedException in Pull futures! " + e);
+                    return new ArrayList<ReceivedMessage>();
+                } catch (TimeoutException e) {
+                    LOG.error("Encountered TimeoutException in Pull futures! " + e);
+                    return new ArrayList<ReceivedMessage>();
+                }
+            }
+            return receivedMessageList;
+        } else {
+            return stub.pullCallable().call(pullRequest).getReceivedMessagesList();
+        }
     }
 
     @Override
     public void acknowledge(List<String> acknowledgementIds) {
+        LOG.info("Acknowledge inside grpcpubsubsubscriber has been called");
         if (acknowledgementIds.isEmpty()) {
             return;
         }
 
         // grpc servers won't accept acknowledge requests that are too large so we split the ackIds
         List<List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
+        LOG.info(
+                "Splits: "
+                        + splittedAckIds.size()
+                        + " and "
+                        + splittedAckIds.stream().map(List::size).reduce(0, Integer::sum)
+                        + " elements.");
         splittedAckIds.forEach(
                 batch ->
                         stub.acknowledgeCallable()
@@ -67,6 +119,7 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
                                                 .setSubscription(projectSubscriptionName)
                                                 .addAllAckIds(batch)
                                                 .build()));
+        LOG.info("Finished calling all acknowledgeCallables. End of function.");
     }
 
     /* maxPayload is the maximum number of bytes to devote to actual ids in

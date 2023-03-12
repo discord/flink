@@ -18,31 +18,20 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub;
 
-import com.google.api.gax.grpc.GrpcCallContext;
-import com.google.api.gax.retrying.RetrySettings;
-import com.google.api.gax.rpc.ApiCallContext;
-import com.google.api.gax.rpc.StatusCode;
-import com.google.api.gax.rpc.TransportChannelProvider;
-import com.google.api.gax.rpc.UnaryCallSettings;
-import com.google.cloud.pubsub.v1.SubscriptionAdminSettings;
-import com.google.cloud.pubsub.v1.stub.GrpcSubscriberStub;
-import com.google.cloud.pubsub.v1.stub.SubscriberStub;
-import com.google.pubsub.v1.Subscription;
-import jdk.internal.net.http.websocket.Transport;
 import org.apache.flink.connector.gcp.pubsub.source.PubSubSource;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriberFactory;
 
+import com.google.api.gax.rpc.StatusCode;
+import com.google.api.gax.rpc.TransportChannelProvider;
 import com.google.auth.Credentials;
+import com.google.cloud.pubsub.v1.stub.GrpcSubscriberStub;
+import com.google.cloud.pubsub.v1.stub.SubscriberStub;
 import com.google.cloud.pubsub.v1.stub.SubscriberStubSettings;
 import com.google.pubsub.v1.PullRequest;
-import io.grpc.ManagedChannel;
-import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
-import io.grpc.netty.shaded.io.grpc.netty.NegotiationType;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import org.threeten.bp.Duration;
 
 import java.io.IOException;
-import org.threeten.bp.Duration;
 import java.util.Arrays;
 import java.util.HashSet;
 
@@ -83,8 +72,7 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
             String projectSubscriptionName,
             int retries,
             Duration pullTimeout,
-            int maxMessagesPerPull
-    ) {
+            int maxMessagesPerPull) {
         this(
                 SubscriberStubSettings.defaultGrpcTransportProviderBuilder()
                         .setMaxInboundMessageSize(20 * 1024 * 1024) // 20MB (maximum message size).
@@ -92,21 +80,22 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
                 projectSubscriptionName,
                 retries,
                 pullTimeout,
-                maxMessagesPerPull
-        );
+                maxMessagesPerPull);
     }
 
     @Override
     public PubSubSubscriber getSubscriber(Credentials credentials) throws IOException {
 
-        SubscriberStubSettings.Builder subscriberSettingsBuilder = SubscriberStubSettings.newBuilder();
+        SubscriberStubSettings.Builder subscriberSettingsBuilder =
+                SubscriberStubSettings.newBuilder();
 
         subscriberSettingsBuilder
                 .createSubscriptionSettings()
                 .setRetrySettings(
                         subscriberSettingsBuilder
                                 .createSubscriptionSettings()
-                                .getRetrySettings().toBuilder()
+                                .getRetrySettings()
+                                .toBuilder()
                                 .setInitialRetryDelay(Duration.ofMillis(10L))
                                 .setInitialRpcTimeout(timeout)
                                 .setMaxAttempts(retries)
@@ -114,13 +103,14 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
                                 .setMaxRpcTimeout(timeout)
                                 .setRetryDelayMultiplier(1.4)
                                 .build())
-                .setRetryableCodes(new HashSet<>(Arrays.asList(
-                        StatusCode.Code.UNAVAILABLE,
-                        StatusCode.Code.DEADLINE_EXCEEDED)));
+                .setRetryableCodes(
+                        new HashSet<>(
+                                Arrays.asList(
+                                        StatusCode.Code.UNAVAILABLE,
+                                        StatusCode.Code.DEADLINE_EXCEEDED)));
 
-        SubscriberStubSettings subscriberSettings = subscriberSettingsBuilder
-                .setTransportChannelProvider(channelProvider)
-                .build();
+        SubscriberStubSettings subscriberSettings =
+                subscriberSettingsBuilder.setTransportChannelProvider(channelProvider).build();
 
         SubscriberStub stub = GrpcSubscriberStub.create(subscriberSettings);
 

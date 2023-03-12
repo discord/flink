@@ -17,36 +17,38 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub;
 
+import com.google.api.gax.grpc.GrpcTransportChannel;
+import com.google.api.gax.rpc.FixedTransportChannelProvider;
+import com.google.api.gax.rpc.TransportChannelProvider;
+import com.google.cloud.pubsub.v1.Publisher;
+import com.google.protobuf.ByteString;
+import com.google.pubsub.v1.ProjectSubscriptionName;
+import com.google.pubsub.v1.PubsubMessage;
+import com.google.pubsub.v1.ReceivedMessage;
+import io.grpc.ManagedChannel;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.EmulatorCredentials;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.GCloudUnitTestBase;
-import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.PubSubSubscriberFactoryForEmulator;
 import org.apache.flink.streaming.connectors.gcp.pubsub.emulator.PubsubHelper;
-
-import com.google.cloud.pubsub.v1.Publisher;
-import com.google.protobuf.ByteString;
-import com.google.pubsub.v1.PubsubMessage;
-import com.google.pubsub.v1.ReceivedMessage;
-import org.apache.commons.lang3.StringUtils;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.threeten.bp.Duration;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.IntStream;
 
 import static org.apache.flink.streaming.connectors.gcp.pubsub.SimpleStringSchemaWithStopMarkerDetection.STOP_MARKER;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 /**
  * This is a test using the emulator for a full topology that uses PubSub as both input and output.
@@ -57,7 +59,7 @@ public class EmulatedFullTopologyTest extends GCloudUnitTestBase {
 
     private static final String PROJECT_NAME = "Project";
     private static final String INPUT_TOPIC_NAME = "InputTopic";
-    private static final String INPUT_SUBSCRIPTION_NAME = "InputSubscription";
+    private static final String SUBSCRIPTION_NAME = "InputSubscription";
     private static final String OUTPUT_TOPIC_NAME = "OutputTopic";
     private static final String OUTPUT_SUBSCRIPTION_NAME = "OutputSubscription";
 
@@ -71,7 +73,7 @@ public class EmulatedFullTopologyTest extends GCloudUnitTestBase {
         assertNotNull("Missing pubsubHelper.", pubsubHelper);
         pubsubHelper.createTopic(PROJECT_NAME, INPUT_TOPIC_NAME);
         pubsubHelper.createSubscription(
-                PROJECT_NAME, INPUT_SUBSCRIPTION_NAME, PROJECT_NAME, INPUT_TOPIC_NAME);
+                PROJECT_NAME, SUBSCRIPTION_NAME, PROJECT_NAME, INPUT_TOPIC_NAME);
         pubsubHelper.createTopic(PROJECT_NAME, OUTPUT_TOPIC_NAME);
         pubsubHelper.createSubscription(
                 PROJECT_NAME, OUTPUT_SUBSCRIPTION_NAME, PROJECT_NAME, OUTPUT_TOPIC_NAME);
@@ -80,7 +82,7 @@ public class EmulatedFullTopologyTest extends GCloudUnitTestBase {
     @AfterClass
     public static void tearDown() throws Exception {
         assertNotNull("Missing pubsubHelper.", pubsubHelper);
-        pubsubHelper.deleteSubscription(PROJECT_NAME, INPUT_SUBSCRIPTION_NAME);
+        pubsubHelper.deleteSubscription(PROJECT_NAME, SUBSCRIPTION_NAME);
         pubsubHelper.deleteTopic(PROJECT_NAME, INPUT_TOPIC_NAME);
         pubsubHelper.deleteSubscription(PROJECT_NAME, OUTPUT_SUBSCRIPTION_NAME);
         pubsubHelper.deleteTopic(PROJECT_NAME, OUTPUT_TOPIC_NAME);
@@ -146,6 +148,14 @@ public class EmulatedFullTopologyTest extends GCloudUnitTestBase {
         env.setParallelism(4);
         env.setRestartStrategy(RestartStrategies.noRestart());
 
+        ManagedChannel managedChannel =
+                NettyChannelBuilder.forTarget(getPubSubHostPort())
+                        .usePlaintext() // This is 'Ok' because this is ONLY used for testing.
+                        .build();
+
+        TransportChannelProvider channelProvider =
+                FixedTransportChannelProvider.create(GrpcTransportChannel.create(managedChannel));
+
         // Silly topology
         env
                 // Read the records from PubSub
@@ -158,17 +168,16 @@ public class EmulatedFullTopologyTest extends GCloudUnitTestBase {
 
                                 // First we set the exact same settings as we would normally use.
                                 .withProjectName(PROJECT_NAME)
-                                .withSubscriptionName(INPUT_SUBSCRIPTION_NAME)
+                                .withSubscriptionName(SUBSCRIPTION_NAME)
 
                                 // We use the credentials for the emulator
                                 .withCredentials(EmulatorCredentials.getInstance())
 
                                 // Connect to the emulator
                                 .withPubSubSubscriberFactory(
-                                        new PubSubSubscriberFactoryForEmulator(
-                                                getPubSubHostPort(),
-                                                PROJECT_NAME,
-                                                INPUT_SUBSCRIPTION_NAME,
+                                        new DefaultPubSubSubscriberFactory(
+                                                channelProvider,
+                                                ProjectSubscriptionName.format(PROJECT_NAME, SUBSCRIPTION_NAME),
                                                 1,
                                                 Duration.ofSeconds(1),
                                                 3))

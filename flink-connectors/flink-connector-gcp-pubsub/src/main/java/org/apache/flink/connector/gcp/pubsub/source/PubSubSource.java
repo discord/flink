@@ -49,9 +49,9 @@ import org.apache.flink.util.Preconditions;
 
 import com.google.auth.Credentials;
 import com.google.pubsub.v1.ProjectSubscriptionName;
+import org.threeten.bp.Duration;
 
 import java.io.IOException;
-import org.threeten.bp.Duration;
 import java.util.Properties;
 import java.util.function.Supplier;
 

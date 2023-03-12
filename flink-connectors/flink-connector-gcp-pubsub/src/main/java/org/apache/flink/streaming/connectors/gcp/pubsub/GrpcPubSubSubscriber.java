@@ -18,14 +18,15 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub;
 
-import com.google.api.gax.rpc.ApiCallContext;
-import com.google.cloud.pubsub.v1.stub.SubscriberStub;
-import com.google.pubsub.v1.*;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 
+import com.google.cloud.pubsub.v1.stub.SubscriberStub;
+import com.google.pubsub.v1.AcknowledgeRequest;
+import com.google.pubsub.v1.PullRequest;
+import com.google.pubsub.v1.ReceivedMessage;
 import io.grpc.StatusRuntimeException;
-
 import org.threeten.bp.Duration;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -50,9 +51,9 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
             Duration timeout) {
         this.projectSubscriptionName = projectSubscriptionName;
         this.stub = stub;
+        this.pullRequest = pullRequest;
         this.retries = retries;
         this.timeout = timeout;
-        this.pullRequest = pullRequest;
     }
 
     @Override
@@ -82,11 +83,12 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
         List<List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
         splittedAckIds.forEach(
                 batch ->
-                        stub.acknowledgeCallable().call(
-                                AcknowledgeRequest.newBuilder()
-                                        .setSubscription(projectSubscriptionName)
-                                        .addAllAckIds(batch)
-                                        .build()));
+                        stub.acknowledgeCallable()
+                                .call(
+                                        AcknowledgeRequest.newBuilder()
+                                                .setSubscription(projectSubscriptionName)
+                                                .addAllAckIds(batch)
+                                                .build()));
     }
 
     /* maxPayload is the maximum number of bytes to devote to actual ids in

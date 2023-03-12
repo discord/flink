@@ -18,7 +18,6 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub.common;
 
-import com.google.api.gax.rpc.TransportChannelProvider;
 import com.google.auth.Credentials;
 import com.google.cloud.pubsub.v1.stub.SubscriberStub;
 

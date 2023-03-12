@@ -17,21 +17,23 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub.emulator;
 
-import com.google.api.gax.rpc.FixedTransportChannelProvider;
-import com.google.api.gax.rpc.TransportChannelProvider;
 import org.apache.flink.streaming.connectors.gcp.pubsub.GrpcPubSubSubscriber;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriberFactory;
 
+import com.google.api.gax.rpc.StatusCode;
+import com.google.api.gax.rpc.TransportChannelProvider;
 import com.google.auth.Credentials;
+import com.google.cloud.pubsub.v1.stub.GrpcSubscriberStub;
+import com.google.cloud.pubsub.v1.stub.SubscriberStub;
+import com.google.cloud.pubsub.v1.stub.SubscriberStubSettings;
 import com.google.pubsub.v1.ProjectSubscriptionName;
 import com.google.pubsub.v1.PullRequest;
-import com.google.pubsub.v1.SubscriberGrpc;
-import io.grpc.ManagedChannel;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import org.threeten.bp.Duration;
 
 import java.io.IOException;
-import java.time.Duration;
+import java.util.Arrays;
+import java.util.HashSet;
 
 /**
  * A convenience PubSubSubscriberFactory that can be used to connect to a PubSub emulator. The
@@ -39,20 +41,20 @@ import java.time.Duration;
  * require or provide this.
  */
 public class PubSubSubscriberFactoryForEmulator implements PubSubSubscriberFactory {
-    private final String hostAndPort;
+    private final TransportChannelProvider channelProvider;
     private final String projectSubscriptionName;
     private final int retries;
     private final Duration timeout;
     private final int maxMessagesPerPull;
 
     public PubSubSubscriberFactoryForEmulator(
-            String hostAndPort,
+            TransportChannelProvider channelProvider,
             String project,
             String subscription,
             int retries,
             Duration timeout,
             int maxMessagesPerPull) {
-        this.hostAndPort = hostAndPort;
+        this.channelProvider = channelProvider;
         this.retries = retries;
         this.timeout = timeout;
         this.maxMessagesPerPull = maxMessagesPerPull;
@@ -60,22 +62,42 @@ public class PubSubSubscriberFactoryForEmulator implements PubSubSubscriberFacto
     }
 
     @Override
-    public PubSubSubscriber getSubscriber(Credentials credentials, TransportChannelProvider channelProvider) throws IOException {
-        ManagedChannel managedChannel =
-                NettyChannelBuilder.forTarget(hostAndPort)
-                        .usePlaintext() // This is 'Ok' because this is ONLY used for testing.
-                        .build();
+    public PubSubSubscriber getSubscriber(Credentials credentials) throws IOException {
+        SubscriberStubSettings.Builder subscriberSettingsBuilder =
+                SubscriberStubSettings.newBuilder();
 
-        TransportChannelProvider channelProvider =
-                FixedTransportChannelProvider.create(GrpcTransportChannel.create(channel));
+        subscriberSettingsBuilder
+                .createSubscriptionSettings()
+                .setRetrySettings(
+                        subscriberSettingsBuilder
+                                .createSubscriptionSettings()
+                                .getRetrySettings()
+                                .toBuilder()
+                                .setInitialRetryDelay(org.threeten.bp.Duration.ofMillis(10L))
+                                .setInitialRpcTimeout(timeout)
+                                .setMaxAttempts(retries)
+                                .setMaxRetryDelay(org.threeten.bp.Duration.ofSeconds(10L))
+                                .setMaxRpcTimeout(timeout)
+                                .setRetryDelayMultiplier(1.4)
+                                .build())
+                .setRetryableCodes(
+                        new HashSet<>(
+                                Arrays.asList(
+                                        StatusCode.Code.UNAVAILABLE,
+                                        StatusCode.Code.DEADLINE_EXCEEDED)));
+
+        SubscriberStubSettings subscriberSettings =
+                subscriberSettingsBuilder.setTransportChannelProvider(this.channelProvider).build();
+
+        SubscriberStub stub = GrpcSubscriberStub.create(subscriberSettings);
 
         PullRequest pullRequest =
                 PullRequest.newBuilder()
                         .setMaxMessages(maxMessagesPerPull)
                         .setSubscription(projectSubscriptionName)
                         .build();
-        SubscriberGrpc.SubscriberBlockingStub stub = SubscriberGrpc.newBlockingStub(managedChannel);
+
         return new GrpcPubSubSubscriber(
-                projectSubscriptionName, pullRequest, retries, timeout);
+                projectSubscriptionName, stub, pullRequest, retries, timeout);
     }
 }

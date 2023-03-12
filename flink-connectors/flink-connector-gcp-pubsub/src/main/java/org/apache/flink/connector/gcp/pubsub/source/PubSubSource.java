@@ -51,7 +51,7 @@ import com.google.auth.Credentials;
 import com.google.pubsub.v1.ProjectSubscriptionName;
 
 import java.io.IOException;
-import java.time.Duration;
+import org.threeten.bp.Duration;
 import java.util.Properties;
 import java.util.function.Supplier;
 

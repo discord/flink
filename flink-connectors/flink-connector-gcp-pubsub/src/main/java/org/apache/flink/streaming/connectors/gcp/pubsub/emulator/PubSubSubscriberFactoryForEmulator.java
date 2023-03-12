@@ -17,7 +17,9 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub.emulator;
 
-import org.apache.flink.streaming.connectors.gcp.pubsub.BlockingGrpcPubSubSubscriber;
+import com.google.api.gax.rpc.FixedTransportChannelProvider;
+import com.google.api.gax.rpc.TransportChannelProvider;
+import org.apache.flink.streaming.connectors.gcp.pubsub.GrpcPubSubSubscriber;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriberFactory;
 
@@ -58,11 +60,14 @@ public class PubSubSubscriberFactoryForEmulator implements PubSubSubscriberFacto
     }
 
     @Override
-    public PubSubSubscriber getSubscriber(Credentials credentials) throws IOException {
+    public PubSubSubscriber getSubscriber(Credentials credentials, TransportChannelProvider channelProvider) throws IOException {
         ManagedChannel managedChannel =
                 NettyChannelBuilder.forTarget(hostAndPort)
                         .usePlaintext() // This is 'Ok' because this is ONLY used for testing.
                         .build();
+
+        TransportChannelProvider channelProvider =
+                FixedTransportChannelProvider.create(GrpcTransportChannel.create(channel));
 
         PullRequest pullRequest =
                 PullRequest.newBuilder()
@@ -70,7 +75,7 @@ public class PubSubSubscriberFactoryForEmulator implements PubSubSubscriberFacto
                         .setSubscription(projectSubscriptionName)
                         .build();
         SubscriberGrpc.SubscriberBlockingStub stub = SubscriberGrpc.newBlockingStub(managedChannel);
-        return new BlockingGrpcPubSubSubscriber(
-                projectSubscriptionName, managedChannel, stub, pullRequest, retries, timeout);
+        return new GrpcPubSubSubscriber(
+                projectSubscriptionName, pullRequest, retries, timeout);
     }
 }

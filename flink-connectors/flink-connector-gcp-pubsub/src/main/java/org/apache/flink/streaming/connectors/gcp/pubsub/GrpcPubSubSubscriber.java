@@ -18,19 +18,16 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub;
 
+import com.google.api.gax.rpc.ApiCallContext;
+import com.google.cloud.pubsub.v1.stub.SubscriberStub;
+import com.google.pubsub.v1.*;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 
-import com.google.pubsub.v1.AcknowledgeRequest;
-import com.google.pubsub.v1.PullRequest;
-import com.google.pubsub.v1.ReceivedMessage;
-import com.google.pubsub.v1.SubscriberGrpc;
-import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
 
-import java.time.Duration;
+import org.threeten.bp.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -38,23 +35,20 @@ import static java.util.concurrent.TimeUnit.SECONDS;
  * Implementation for {@link PubSubSubscriber}. This Grpc PubSubSubscriber allows for flexible
  * timeouts and retries.
  */
-public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
+public class GrpcPubSubSubscriber implements PubSubSubscriber {
     private final String projectSubscriptionName;
-    private final ManagedChannel channel;
-    private final SubscriberGrpc.SubscriberBlockingStub stub;
+    private final SubscriberStub stub;
     private final int retries;
     private final Duration timeout;
     private final PullRequest pullRequest;
 
-    public BlockingGrpcPubSubSubscriber(
+    public GrpcPubSubSubscriber(
             String projectSubscriptionName,
-            ManagedChannel channel,
-            SubscriberGrpc.SubscriberBlockingStub stub,
+            SubscriberStub stub,
             PullRequest pullRequest,
             int retries,
             Duration timeout) {
         this.projectSubscriptionName = projectSubscriptionName;
-        this.channel = channel;
         this.stub = stub;
         this.retries = retries;
         this.timeout = timeout;
@@ -68,9 +62,7 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
 
     private List<ReceivedMessage> pull(int retriesRemaining) {
         try {
-            return stub.withDeadlineAfter(timeout.toMillis(), TimeUnit.MILLISECONDS)
-                    .pull(pullRequest)
-                    .getReceivedMessagesList();
+            return stub.pullCallable().call(pullRequest).getReceivedMessagesList();
         } catch (StatusRuntimeException e) {
             if (retriesRemaining > 0) {
                 return pull(retriesRemaining - 1);
@@ -90,27 +82,11 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
         List<List<String>> splittedAckIds = splitAckIds(acknowledgementIds);
         splittedAckIds.forEach(
                 batch ->
-                        acknowledgeWithRetries(
+                        stub.acknowledgeCallable().call(
                                 AcknowledgeRequest.newBuilder()
                                         .setSubscription(projectSubscriptionName)
                                         .addAllAckIds(batch)
-                                        .build(),
-                                retries));
-    }
-
-    private void acknowledgeWithRetries(
-            AcknowledgeRequest acknowledgeRequest, int retriesRemaining) {
-        try {
-            stub.withDeadlineAfter(timeout.toMillis(), TimeUnit.MILLISECONDS)
-                    .acknowledge(acknowledgeRequest);
-        } catch (StatusRuntimeException e) {
-            if (retriesRemaining > 0) {
-                acknowledgeWithRetries(acknowledgeRequest, retriesRemaining - 1);
-                return;
-            }
-
-            throw e;
-        }
+                                        .build()));
     }
 
     /* maxPayload is the maximum number of bytes to devote to actual ids in
@@ -152,7 +128,7 @@ public class BlockingGrpcPubSubSubscriber implements PubSubSubscriber {
 
     @Override
     public void close() throws Exception {
-        channel.shutdownNow();
-        channel.awaitTermination(20, SECONDS);
+        stub.shutdownNow();
+        stub.awaitTermination(20, SECONDS);
     }
 }

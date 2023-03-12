@@ -18,6 +18,17 @@
 
 package org.apache.flink.streaming.connectors.gcp.pubsub;
 
+import com.google.api.gax.grpc.GrpcCallContext;
+import com.google.api.gax.retrying.RetrySettings;
+import com.google.api.gax.rpc.ApiCallContext;
+import com.google.api.gax.rpc.StatusCode;
+import com.google.api.gax.rpc.TransportChannelProvider;
+import com.google.api.gax.rpc.UnaryCallSettings;
+import com.google.cloud.pubsub.v1.SubscriptionAdminSettings;
+import com.google.cloud.pubsub.v1.stub.GrpcSubscriberStub;
+import com.google.cloud.pubsub.v1.stub.SubscriberStub;
+import com.google.pubsub.v1.Subscription;
+import jdk.internal.net.http.websocket.Transport;
 import org.apache.flink.connector.gcp.pubsub.source.PubSubSource;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriberFactory;
@@ -25,21 +36,22 @@ import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriberF
 import com.google.auth.Credentials;
 import com.google.cloud.pubsub.v1.stub.SubscriberStubSettings;
 import com.google.pubsub.v1.PullRequest;
-import com.google.pubsub.v1.SubscriberGrpc;
 import io.grpc.ManagedChannel;
-import io.grpc.auth.MoreCallCredentials;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NegotiationType;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 
 import java.io.IOException;
-import java.time.Duration;
+import org.threeten.bp.Duration;
+import java.util.Arrays;
+import java.util.HashSet;
 
 /**
  * A default {@link PubSubSubscriberFactory} used by the {@link PubSubSource.PubSubSourceBuilder} to
  * obtain a subscriber with which messages can be pulled from GCP Pub/Sub.
  */
 public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
+    private final TransportChannelProvider channelProvider;
     private final int retries;
     private final Duration timeout;
     private final int maxMessagesPerPull;
@@ -55,33 +67,70 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
      * @param maxMessagesPerPull The maximum number of messages that should be pulled in one go.
      */
     public DefaultPubSubSubscriberFactory(
+            TransportChannelProvider channelProvider,
             String projectSubscriptionName,
             int retries,
             Duration pullTimeout,
             int maxMessagesPerPull) {
+        this.channelProvider = channelProvider;
         this.retries = retries;
         this.timeout = pullTimeout;
         this.maxMessagesPerPull = maxMessagesPerPull;
         this.projectSubscriptionName = projectSubscriptionName;
     }
 
+    public DefaultPubSubSubscriberFactory(
+            String projectSubscriptionName,
+            int retries,
+            Duration pullTimeout,
+            int maxMessagesPerPull
+    ) {
+        this(
+                SubscriberStubSettings.defaultGrpcTransportProviderBuilder()
+                        .setMaxInboundMessageSize(20 * 1024 * 1024) // 20MB (maximum message size).
+                        .build(),
+                projectSubscriptionName,
+                retries,
+                pullTimeout,
+                maxMessagesPerPull
+        );
+    }
+
     @Override
     public PubSubSubscriber getSubscriber(Credentials credentials) throws IOException {
-        ManagedChannel channel =
-                NettyChannelBuilder.forTarget(SubscriberStubSettings.getDefaultEndpoint())
-                        .negotiationType(NegotiationType.TLS)
-                        .sslContext(GrpcSslContexts.forClient().ciphers(null).build())
-                        .build();
+
+        SubscriberStubSettings.Builder subscriberSettingsBuilder = SubscriberStubSettings.newBuilder();
+
+        subscriberSettingsBuilder
+                .createSubscriptionSettings()
+                .setRetrySettings(
+                        subscriberSettingsBuilder
+                                .createSubscriptionSettings()
+                                .getRetrySettings().toBuilder()
+                                .setInitialRetryDelay(Duration.ofMillis(10L))
+                                .setInitialRpcTimeout(timeout)
+                                .setMaxAttempts(retries)
+                                .setMaxRetryDelay(Duration.ofSeconds(10L))
+                                .setMaxRpcTimeout(timeout)
+                                .setRetryDelayMultiplier(1.4)
+                                .build())
+                .setRetryableCodes(new HashSet<>(Arrays.asList(
+                        StatusCode.Code.UNAVAILABLE,
+                        StatusCode.Code.DEADLINE_EXCEEDED)));
+
+        SubscriberStubSettings subscriberSettings = subscriberSettingsBuilder
+                .setTransportChannelProvider(channelProvider)
+                .build();
+
+        SubscriberStub stub = GrpcSubscriberStub.create(subscriberSettings);
 
         PullRequest pullRequest =
                 PullRequest.newBuilder()
                         .setMaxMessages(maxMessagesPerPull)
                         .setSubscription(projectSubscriptionName)
                         .build();
-        SubscriberGrpc.SubscriberBlockingStub stub =
-                SubscriberGrpc.newBlockingStub(channel)
-                        .withCallCredentials(MoreCallCredentials.from(credentials));
-        return new BlockingGrpcPubSubSubscriber(
-                projectSubscriptionName, channel, stub, pullRequest, retries, timeout);
+
+        return new GrpcPubSubSubscriber(
+                projectSubscriptionName, stub, pullRequest, retries, timeout);
     }
 }

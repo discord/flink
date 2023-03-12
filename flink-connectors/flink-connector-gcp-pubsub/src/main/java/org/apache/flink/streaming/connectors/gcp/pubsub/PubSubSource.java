@@ -47,7 +47,7 @@ import com.google.pubsub.v1.ReceivedMessage;
 
 import java.io.IOException;
 import java.io.Serializable;
-import java.time.Duration;
+import org.threeten.bp.Duration;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 

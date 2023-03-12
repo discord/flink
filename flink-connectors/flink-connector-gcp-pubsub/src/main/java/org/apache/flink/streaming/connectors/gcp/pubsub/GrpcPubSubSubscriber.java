@@ -24,8 +24,6 @@ import com.google.cloud.pubsub.v1.stub.SubscriberStub;
 import com.google.pubsub.v1.AcknowledgeRequest;
 import com.google.pubsub.v1.PullRequest;
 import com.google.pubsub.v1.ReceivedMessage;
-import io.grpc.StatusRuntimeException;
-import org.threeten.bp.Duration;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,38 +37,18 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 public class GrpcPubSubSubscriber implements PubSubSubscriber {
     private final String projectSubscriptionName;
     private final SubscriberStub stub;
-    private final int retries;
-    private final Duration timeout;
     private final PullRequest pullRequest;
 
     public GrpcPubSubSubscriber(
-            String projectSubscriptionName,
-            SubscriberStub stub,
-            PullRequest pullRequest,
-            int retries,
-            Duration timeout) {
+            String projectSubscriptionName, SubscriberStub stub, PullRequest pullRequest) {
         this.projectSubscriptionName = projectSubscriptionName;
         this.stub = stub;
         this.pullRequest = pullRequest;
-        this.retries = retries;
-        this.timeout = timeout;
     }
 
     @Override
     public List<ReceivedMessage> pull() {
-        return pull(retries);
-    }
-
-    private List<ReceivedMessage> pull(int retriesRemaining) {
-        try {
-            return stub.pullCallable().call(pullRequest).getReceivedMessagesList();
-        } catch (StatusRuntimeException e) {
-            if (retriesRemaining > 0) {
-                return pull(retriesRemaining - 1);
-            }
-
-            throw e;
-        }
+        return stub.pullCallable().call(pullRequest).getReceivedMessagesList();
     }
 
     @Override

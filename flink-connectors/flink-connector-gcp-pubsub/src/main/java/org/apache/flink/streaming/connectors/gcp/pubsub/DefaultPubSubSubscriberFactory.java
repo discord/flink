@@ -120,7 +120,6 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
                         .setSubscription(projectSubscriptionName)
                         .build();
 
-        return new GrpcPubSubSubscriber(
-                projectSubscriptionName, stub, pullRequest, retries, timeout);
+        return new GrpcPubSubSubscriber(projectSubscriptionName, stub, pullRequest);
     }
 }

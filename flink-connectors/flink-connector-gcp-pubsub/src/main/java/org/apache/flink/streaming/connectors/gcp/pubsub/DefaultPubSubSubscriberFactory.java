@@ -73,6 +73,14 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
                         .sslContext(GrpcSslContexts.forClient().ciphers(null).build())
                         .build();
 
+        SubscriberStubSettings subscriberStubSettings =
+                SubscriberStubSettings.newBuilder()
+                        .setTransportChannelProvider(
+                                SubscriberStubSettings.defaultGrpcTransportProviderBuilder()
+                                        .setMaxInboundMessageSize(20 * 1024 * 1024) // 20MB (maximum message size).
+                                        .build())
+                        .build();
+
         PullRequest pullRequest =
                 PullRequest.newBuilder()
                         .setMaxMessages(maxMessagesPerPull)

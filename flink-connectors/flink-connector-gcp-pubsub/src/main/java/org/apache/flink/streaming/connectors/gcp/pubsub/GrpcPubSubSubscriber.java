@@ -30,9 +30,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -47,6 +48,8 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
     private final PullRequest pullRequest;
     private final int concurrentPullRequests;
 
+    private ExecutorService executor;
+
     public GrpcPubSubSubscriber(
             String projectSubscriptionName,
             SubscriberStub stub,
@@ -56,6 +59,7 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
         this.stub = stub;
         this.pullRequest = pullRequest;
         this.concurrentPullRequests = concurrentPullRequests;
+        this.executor = Executors.newFixedThreadPool(concurrentPullRequests);
     }
 
     public GrpcPubSubSubscriber(
@@ -68,32 +72,36 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
 
     @Override
     public List<ReceivedMessage> pull() {
-        if (concurrentPullRequests > 1) {
-            List<ApiFuture<PullResponse>> futures = new ArrayList<ApiFuture<PullResponse>>();
-            for (int i = 0; i < concurrentPullRequests; i++) {
-                futures.add(stub.pullCallable().futureCall(pullRequest));
-            }
-            List<ReceivedMessage> receivedMessageList = new ArrayList<ReceivedMessage>();
+        CountDownLatch latch = new CountDownLatch(concurrentPullRequests);
+        List<ReceivedMessage> receivedMessageList = Collections.synchronizedList(new ArrayList<>());
+        AtomicInteger errorCount = new AtomicInteger(0);
 
-            for (int i = 0; i < concurrentPullRequests; i++) {
+        for (int i = 0; i < concurrentPullRequests; i++) {
+            executor.submit(() -> {
                 try {
-                    receivedMessageList.addAll(
-                            futures.get(i).get(60L, SECONDS).getReceivedMessagesList());
-                } catch (ExecutionException e) {
-                    LOG.error("Encountered ExecutionException in Pull futures! " + e);
-                    return new ArrayList<ReceivedMessage>();
-                } catch (InterruptedException e) {
-                    LOG.error("Encountered InterruptedException in Pull futures! " + e);
-                    return new ArrayList<ReceivedMessage>();
-                } catch (TimeoutException e) {
-                    LOG.error("Encountered TimeoutException in Pull futures! " + e);
-                    return new ArrayList<ReceivedMessage>();
+                    PullResponse response = stub.pullCallable().futureCall(pullRequest).get(60L, SECONDS);
+                    receivedMessageList.addAll(response.getReceivedMessagesList());
+                } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                    LOG.error("Encountered exception in Pull futures! " + e);
+                    errorCount.incrementAndGet();
+                } finally {
+                    latch.countDown();
                 }
-            }
-            return receivedMessageList;
-        } else {
-            return stub.pullCallable().call(pullRequest).getReceivedMessagesList();
+            });
         }
+
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            LOG.error("Encountered InterruptedException while waiting for Pull futures to complete! " + e);
+        }
+
+        if (errorCount.get() > 0) {
+            // Handle the case where one or more pull requests encountered an exception.
+            // You can choose how to handle it, e.g., return an empty list or throw a custom exception.
+            LOG.error("Error count was: " + errorCount.get());
+        }
+        return receivedMessageList;
     }
 
     @Override

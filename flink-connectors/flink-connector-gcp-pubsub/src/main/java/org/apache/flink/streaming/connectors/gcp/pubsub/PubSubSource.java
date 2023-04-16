@@ -310,14 +310,15 @@ public class PubSubSource<OUT> extends RichSourceFunction<OUT>
                 int maxMessagesPerPull,
                 Duration perRequestTimeout,
                 int retries,
-                int parallelPullRequests) {
+                int concurrentPullRequests) {
             this.pubSubSubscriberFactory =
                     new DefaultPubSubSubscriberFactory(
                             ProjectSubscriptionName.format(projectName, subscriptionName),
                             retries,
                             perRequestTimeout,
                             maxMessagesPerPull,
-                            parallelPullRequests);
+                            concurrentPullRequests,
+                            2 * maxMessagesPerPull * concurrentPullRequests);
             return this;
         }
 
@@ -351,7 +352,8 @@ public class PubSubSource<OUT> extends RichSourceFunction<OUT>
                                 3,
                                 Duration.ofSeconds(15),
                                 100,
-                                1);
+                                1,
+                                2 * 100);
             }
 
             return new PubSubSource<>(

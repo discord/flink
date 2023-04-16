@@ -22,6 +22,7 @@ import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 
 import com.google.cloud.pubsub.v1.stub.SubscriberStub;
 import com.google.pubsub.v1.AcknowledgeRequest;
+import com.google.pubsub.v1.ModifyAckDeadlineRequest;
 import com.google.pubsub.v1.PullRequest;
 import com.google.pubsub.v1.PullResponse;
 import com.google.pubsub.v1.ReceivedMessage;
@@ -29,14 +30,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -52,70 +55,119 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
     private final int concurrentPullRequests;
 
     private ExecutorService executor;
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(3);
+    private BlockingQueue<ReceivedMessage> messageQueue;
 
     public GrpcPubSubSubscriber(
             String projectSubscriptionName,
             SubscriberStub stub,
             PullRequest pullRequest,
-            int concurrentPullRequests) {
+            int concurrentPullRequests,
+            int messageQueueSize) {
         this.projectSubscriptionName = projectSubscriptionName;
         this.stub = stub;
         this.pullRequest = pullRequest;
         this.concurrentPullRequests = concurrentPullRequests;
         this.executor = Executors.newFixedThreadPool(concurrentPullRequests);
+        this.messageQueue = new LinkedBlockingQueue<>(messageQueueSize);
+
+        // Continuously pull messages using multiple threads
+        for (int i = 0; i < concurrentPullRequests; i++) {
+            executor.submit(
+                    () -> {
+                        while (!Thread.currentThread().isInterrupted()) {
+                            List<ReceivedMessage> receivedMessages = null;
+
+                            if (messageQueue.remainingCapacity() <= 500) {
+                                try {
+                                    SECONDS.sleep(1);
+                                } catch (InterruptedException e) {
+                                    LOG.error("Encountered exception while sleeping: " + e);
+                                }
+                                continue;
+                            }
+
+                            try {
+                                PullResponse response = stub.pullCallable().call(pullRequest);
+                                receivedMessages = response.getReceivedMessagesList();
+                            } catch (Exception e) {
+                                LOG.error("Encountered exception while pulling messages: " + e);
+                            }
+                            if (receivedMessages == null || receivedMessages.isEmpty()) {
+                                try {
+                                    SECONDS.sleep(1);
+                                } catch (InterruptedException e) {
+                                    LOG.error("Encountered exception while sleeping: " + e);
+                                }
+                                continue;
+                            }
+
+                            List<String> messagesToNack = new ArrayList<>();
+                            receivedMessages.forEach(
+                                    receivedMessage -> {
+                                        if (!messageQueue.offer(receivedMessage)) {
+                                            messagesToNack.add(receivedMessage.getAckId());
+                                        }
+                                    });
+                            if (!messagesToNack.isEmpty()) {
+                                long randSeconds = Math.round(Math.random() * 30d);
+                                LOG.warn(
+                                        "Message queue is full. Dropping "
+                                                + messagesToNack.size()
+                                                + " messages, and sleeping for "
+                                                + randSeconds
+                                                + " seconds.");
+
+                                List<List<String>> splittedAckIds = splitAckIds(messagesToNack);
+                                splittedAckIds.forEach(
+                                        ackIds -> {
+                                            Runnable nackTask =
+                                                    () -> {
+                                                        stub.modifyAckDeadlineCallable()
+                                                                .call(
+                                                                        nackMessages(
+                                                                                projectSubscriptionName,
+                                                                                ackIds));
+                                                    };
+
+                                            // Submit the task and get a Future, abd schedule a task
+                                            // to cancel the future after 20 seconds
+                                            Future<?> nackFuture = scheduler.submit(nackTask);
+                                            scheduler.schedule(
+                                                    () -> nackFuture.cancel(true), 20, SECONDS);
+                                        });
+
+                                try {
+                                    SECONDS.sleep(randSeconds);
+                                } catch (InterruptedException e) {
+                                    LOG.error(
+                                            "Encountered exception while sleeping after nacking: "
+                                                    + e);
+                                }
+                            }
+                        }
+                    });
+        }
     }
 
     public GrpcPubSubSubscriber(
             String projectSubscriptionName, SubscriberStub stub, PullRequest pullRequest) {
-        this.projectSubscriptionName = projectSubscriptionName;
-        this.stub = stub;
-        this.pullRequest = pullRequest;
-        this.concurrentPullRequests = 1;
+        this(projectSubscriptionName, stub, pullRequest, 1, 1000);
     }
 
     @Override
     public List<ReceivedMessage> pull() {
-        CountDownLatch latch = new CountDownLatch(concurrentPullRequests);
-        List<ReceivedMessage> receivedMessageList = Collections.synchronizedList(new ArrayList<>());
-        AtomicInteger errorCount = new AtomicInteger(0);
+        List<ReceivedMessage> receivedMessageList = new ArrayList<>();
 
-        for (int i = 0; i < concurrentPullRequests; i++) {
-            executor.submit(
-                    () -> {
-                        try {
-                            PullResponse response =
-                                    stub.pullCallable().futureCall(pullRequest).get(60L, SECONDS);
-                            receivedMessageList.addAll(response.getReceivedMessagesList());
-                        } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                            LOG.error("Encountered exception in Pull futures! " + e);
-                            errorCount.incrementAndGet();
-                        } finally {
-                            latch.countDown();
-                        }
-                    });
-        }
-
-        try {
-            latch.await();
-        } catch (InterruptedException e) {
-            LOG.error(
-                    "Encountered InterruptedException while waiting for Pull futures to complete! "
-                            + e);
-        }
-
-        if (errorCount.get() > 0) {
-            // Handle the case where one or more pull requests encountered an exception.
-            // You can choose how to handle it, e.g., return an empty list or throw a custom
-            // exception.
-            LOG.error("Error count was: " + errorCount.get());
-        }
+        // Drain all available messages from the queue
+        messageQueue.drainTo(receivedMessageList);
         return receivedMessageList;
     }
 
     @Override
     public void acknowledge(List<String> acknowledgementIds) {
-        LOG.info("Acknowledge inside grpcpubsubsubscriber has been called");
         if (acknowledgementIds.isEmpty()) {
+            LOG.info("No messages to acknowledge!");
             return;
         }
 
@@ -127,15 +179,35 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
                         + " and "
                         + splittedAckIds.stream().map(List::size).reduce(0, Integer::sum)
                         + " elements.");
-        splittedAckIds.forEach(
-                batch ->
-                        stub.acknowledgeCallable()
-                                .call(
-                                        AcknowledgeRequest.newBuilder()
-                                                .setSubscription(projectSubscriptionName)
-                                                .addAllAckIds(batch)
-                                                .build()));
-        LOG.info("Finished calling all acknowledgeCallables. End of function.");
+
+        // Split ackIds & acknowledge in parallel
+        List<CompletableFuture<Void>> list = new ArrayList<>();
+        for (List<String> batch : splittedAckIds) {
+            CompletableFuture<Void> voidCompletableFuture =
+                    CompletableFuture.runAsync(
+                            () -> {
+                                try {
+                                    stub.acknowledgeCallable()
+                                            .call(ackMessages(projectSubscriptionName, batch));
+                                } catch (Exception e) {
+                                    LOG.error(
+                                            "Encountered exception while acknowledging messages: "
+                                                    + e);
+                                }
+                            },
+                            executor);
+            list.add(voidCompletableFuture);
+        }
+        CompletableFuture<Void> futuresAll =
+                CompletableFuture.allOf(list.toArray(new CompletableFuture<?>[0]));
+
+        try {
+            futuresAll.get(20, SECONDS);
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            LOG.error("Encountered exception while acknowledging messages: " + e);
+        }
+
+        LOG.info("Finished all acknowledgeCallables. End of function.");
     }
 
     /* maxPayload is the maximum number of bytes to devote to actual ids in
@@ -179,5 +251,20 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
     public void close() throws Exception {
         stub.shutdownNow();
         stub.awaitTermination(20, SECONDS);
+    }
+
+    public AcknowledgeRequest ackMessages(String subscription, List<String> ackIds) {
+        return AcknowledgeRequest.newBuilder()
+                .setSubscription(subscription)
+                .addAllAckIds(ackIds)
+                .build();
+    }
+
+    public ModifyAckDeadlineRequest nackMessages(String subscription, List<String> ackIds) {
+        return ModifyAckDeadlineRequest.newBuilder()
+                .setSubscription(subscription)
+                .addAllAckIds(ackIds)
+                .setAckDeadlineSeconds(0)
+                .build();
     }
 }

@@ -151,7 +151,8 @@ public class EmulatedPubSubSourceTest extends GCloudUnitTestBase {
                                                         10,
                                                         Duration.ofSeconds(1),
                                                         3,
-                                                        1))
+                                                        1,
+                                                        100))
                                         .build())
                         .name("PubSub source");
 

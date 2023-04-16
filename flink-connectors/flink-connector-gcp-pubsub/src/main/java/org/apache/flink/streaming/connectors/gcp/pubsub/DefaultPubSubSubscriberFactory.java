@@ -49,7 +49,8 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
     private final Duration timeout;
     private final int maxMessagesPerPull;
     private final String projectSubscriptionName;
-    private final int parallelPullRequests;
+    private final int concurrentPullRequests;
+    private final int messageQueueSize;
 
     /**
      * @param projectSubscriptionName The formatted name of the Pub/Sub project and subscription to
@@ -66,13 +67,15 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
             int retries,
             Duration pullTimeout,
             int maxMessagesPerPull,
-            int parallelPullRequests) {
+            int concurrentPullRequests,
+            int messageQueueSize) {
         this.hostAndPort = hostAndPort;
         this.retries = retries;
         this.timeout = pullTimeout;
         this.maxMessagesPerPull = maxMessagesPerPull;
         this.projectSubscriptionName = projectSubscriptionName;
-        this.parallelPullRequests = parallelPullRequests;
+        this.concurrentPullRequests = concurrentPullRequests;
+        this.messageQueueSize = messageQueueSize;
     }
 
     public DefaultPubSubSubscriberFactory(
@@ -80,14 +83,16 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
             int retries,
             Duration pullTimeout,
             int maxMessagesPerPull,
-            int parallelPullRequests) {
+            int concurrentPullRequests,
+            int messageQueueSize) {
         this(
                 null,
                 projectSubscriptionName,
                 retries,
                 pullTimeout,
                 maxMessagesPerPull,
-                parallelPullRequests);
+                concurrentPullRequests,
+                messageQueueSize);
     }
 
     public DefaultPubSubSubscriberFactory(
@@ -95,7 +100,13 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
             int retries,
             Duration pullTimeout,
             int maxMessagesPerPull) {
-        this(projectSubscriptionName, retries, pullTimeout, maxMessagesPerPull, 1);
+        this(
+                projectSubscriptionName,
+                retries,
+                pullTimeout,
+                maxMessagesPerPull,
+                1,
+                2 * maxMessagesPerPull);
     }
 
     @Override
@@ -158,6 +169,10 @@ public class DefaultPubSubSubscriberFactory implements PubSubSubscriberFactory {
                         .build();
 
         return new GrpcPubSubSubscriber(
-                projectSubscriptionName, stub, pullRequest, parallelPullRequests);
+                projectSubscriptionName,
+                stub,
+                pullRequest,
+                concurrentPullRequests,
+                messageQueueSize);
     }
 }

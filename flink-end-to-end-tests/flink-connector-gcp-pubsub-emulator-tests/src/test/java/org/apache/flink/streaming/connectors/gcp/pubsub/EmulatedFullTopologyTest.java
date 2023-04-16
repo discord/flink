@@ -181,7 +181,8 @@ public class EmulatedFullTopologyTest extends GCloudUnitTestBase {
                                                 1,
                                                 Duration.ofSeconds(1),
                                                 3,
-                                                1))
+                                                1,
+                                                100))
 
                                 // Make sure we stop the source after a timeout to cleanly end the
                                 // test.

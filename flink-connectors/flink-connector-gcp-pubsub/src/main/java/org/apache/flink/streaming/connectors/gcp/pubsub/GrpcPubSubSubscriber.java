@@ -20,7 +20,6 @@ package org.apache.flink.streaming.connectors.gcp.pubsub;
 
 import org.apache.flink.streaming.connectors.gcp.pubsub.common.PubSubSubscriber;
 
-import com.google.api.core.ApiFuture;
 import com.google.cloud.pubsub.v1.stub.SubscriberStub;
 import com.google.pubsub.v1.AcknowledgeRequest;
 import com.google.pubsub.v1.PullRequest;
@@ -32,7 +31,11 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -77,28 +80,33 @@ public class GrpcPubSubSubscriber implements PubSubSubscriber {
         AtomicInteger errorCount = new AtomicInteger(0);
 
         for (int i = 0; i < concurrentPullRequests; i++) {
-            executor.submit(() -> {
-                try {
-                    PullResponse response = stub.pullCallable().futureCall(pullRequest).get(60L, SECONDS);
-                    receivedMessageList.addAll(response.getReceivedMessagesList());
-                } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                    LOG.error("Encountered exception in Pull futures! " + e);
-                    errorCount.incrementAndGet();
-                } finally {
-                    latch.countDown();
-                }
-            });
+            executor.submit(
+                    () -> {
+                        try {
+                            PullResponse response =
+                                    stub.pullCallable().futureCall(pullRequest).get(60L, SECONDS);
+                            receivedMessageList.addAll(response.getReceivedMessagesList());
+                        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+                            LOG.error("Encountered exception in Pull futures! " + e);
+                            errorCount.incrementAndGet();
+                        } finally {
+                            latch.countDown();
+                        }
+                    });
         }
 
         try {
             latch.await();
         } catch (InterruptedException e) {
-            LOG.error("Encountered InterruptedException while waiting for Pull futures to complete! " + e);
+            LOG.error(
+                    "Encountered InterruptedException while waiting for Pull futures to complete! "
+                            + e);
         }
 
         if (errorCount.get() > 0) {
             // Handle the case where one or more pull requests encountered an exception.
-            // You can choose how to handle it, e.g., return an empty list or throw a custom exception.
+            // You can choose how to handle it, e.g., return an empty list or throw a custom
+            // exception.
             LOG.error("Error count was: " + errorCount.get());
         }
         return receivedMessageList;

@@ -36,6 +36,7 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
@@ -82,6 +83,37 @@ public class WatermarkAssignerOperatorTest extends WatermarkAssignerOperatorTest
         testHarness.setProcessingTime(1060);
         expectedOutput.add(new Watermark(7));
         assertThat(filterOutRecords(output)).isEqualTo(expectedOutput);
+    }
+
+    @Test
+    public void testWatermarkAssignerWithoutFlipFlop() throws Exception {
+        OneInputStreamOperatorTestHarness<RowData, RowData> testHarness =
+                createTestHarness(0, WATERMARK_GENERATOR, 1000);
+        testHarness.getExecutionConfig().setAutoWatermarkInterval(50);
+        testHarness.open();
+
+        ConcurrentLinkedQueue<Object> output = testHarness.getOutput();
+        List<Object> expectedOutput = new ArrayList<>();
+
+        // Process elements at intervals less than idleTimeout (1000ms)
+        for (long i = 1; i <= 20; i++) {
+            testHarness.processElement(new StreamRecord<>(GenericRowData.of(i)));
+            testHarness.setProcessingTime(i * 900); // Set time to 900ms * i
+            if (i % 2 == 0) {
+                expectedOutput.add(new Watermark(i));
+            }
+        }
+
+        // Check if the status ever becomes IDLE (it shouldn't)
+        assertThat(filterOutWatermarkStatuses(output)).doesNotContain(WatermarkStatus.IDLE);
+        assertThat(filterOutRecords(output)).isEqualTo(expectedOutput);
+    }
+
+    private List<WatermarkStatus> filterOutWatermarkStatuses(ConcurrentLinkedQueue<Object> output) {
+        return output.stream()
+                .filter(obj -> obj instanceof WatermarkStatus)
+                .map(obj -> (WatermarkStatus) obj)
+                .collect(Collectors.toList());
     }
 
     @Test
